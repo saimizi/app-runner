@@ -19,9 +19,10 @@ use std::{collections::HashMap, fmt::Display, str::FromStr};
 use super::{
     arun_config::{ArunConfig, NetworkType},
     arun_error::ArunError,
+    utils::IntervalTimer,
 };
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum RunnerState {
     NonExist,
     Created,
@@ -65,12 +66,6 @@ impl FromStr for RunnerState {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
-pub enum PreCheckResult {
-    NormalState(RunnerState),
-    Conflicted,
-}
-
 pub struct Runner {
     state: RunnerState,
     docker: Docker,
@@ -94,8 +89,8 @@ impl Runner {
         }
     }
 
-    async fn pre_check(docker: &Docker, config: &ArunConfig) -> Result<PreCheckResult, ArunError> {
-        let container_name = config.appid();
+    async fn update_state(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
 
         let mut filters = HashMap::new();
         filters.insert("name", vec![container_name.as_str()]);
@@ -106,7 +101,8 @@ impl Runner {
             ..Default::default()
         };
 
-        let summary = docker
+        let summary = self
+            .docker
             .list_containers(Some(options))
             .await
             .into_report()
@@ -122,7 +118,7 @@ impl Runner {
 
         for c in summary {
             let image = c.image.ok_or(ArunError::DockerErr).into_report()?;
-            if image == config.image() {
+            if image == self.config.image() {
                 let s = c.state.ok_or(ArunError::DockerErr).into_report()?;
                 let new_state = RunnerState::from_str(s.as_str())
                     .into_report()
@@ -141,16 +137,17 @@ impl Runner {
                 continue;
             }
 
-            jwarn!(
-                "Another container with image {} is running with name {}",
-                image,
-                container_name
-            );
-
-            return Ok(PreCheckResult::Conflicted);
+            return Err(ArunError::DockerErr)
+                .into_report()
+                .change_context(ArunError::DockerErr)
+                .attach_printable(format!(
+                    "Another container with image {} is running with name {}",
+                    image, container_name
+                ));
         }
 
-        Ok(PreCheckResult::NormalState(state))
+        self.state = state;
+        Ok(())
     }
 
     pub async fn new(json: &str) -> Result<Self, ArunError> {
@@ -161,21 +158,16 @@ impl Runner {
             .into_report()
             .change_context(ArunError::DockerErr)?;
 
-        let pre_check_result = Runner::pre_check(&app, &arun_config).await?;
-        let state = match pre_check_result {
-            PreCheckResult::NormalState(s) => s,
-            PreCheckResult::Conflicted => {
-                return Err(ArunError::ConflictedWithOther).into_report();
-            }
-        };
-
-        jdebug!(PreCheckState = state.to_string());
-
-        Ok(Self {
+        let mut runner = Runner {
             config: arun_config,
             docker: app,
-            state,
-        })
+            state: RunnerState::NonExist,
+        };
+
+        runner.update_state().await?;
+        jdebug!(InitialContainerState = runner.state.to_string());
+
+        Ok(runner)
     }
 
     pub async fn run(&mut self) -> Result<(), ArunError> {
@@ -276,6 +268,9 @@ impl Runner {
 
         let _ = input;
 
+        let mut itimer = IntervalTimer::new(tokio::time::Duration::from_secs(1));
+        let mut old_state = self.state;
+
         let e = loop {
             tokio::select! {
                 Some(ret) = wait_stopped.next() => {
@@ -296,6 +291,14 @@ impl Runner {
                     }
                 },
 
+                _ = itimer.wait_timeup() => {
+                    self.update_state().await?;
+                    if self.state != old_state {
+                        jinfo!(NewContainerState = self.state.to_string(),OldContainerState = old_state.to_string());
+                        old_state = self.state;
+                    }
+
+                }
             }
         };
 
