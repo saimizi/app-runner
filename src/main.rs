@@ -22,6 +22,9 @@ struct Cli {
     #[clap(short = 'l',long="log-file", default_value_t=String::from("/tmp/arun.log"))]
     log: String,
 
+    #[clap(short = 'm', long = "monitor-interval")]
+    monitor_interval: Option<u32>,
+
     #[clap(short, long, parse(from_occurrences))]
     verbose: usize,
 }
@@ -44,7 +47,7 @@ async fn main() -> Result<(), ArunError> {
 
     jdebug!("Config:\n{}", json);
 
-    let mut runner = Runner::new(json.as_str()).await?;
+    let mut runner = Runner::new(json.as_str(), cli.monitor_interval).await?;
 
     runner.run().await
 }

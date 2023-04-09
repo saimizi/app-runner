@@ -150,8 +150,8 @@ impl Runner {
         Ok(())
     }
 
-    pub async fn new(json: &str) -> Result<Self, ArunError> {
-        let arun_config = ArunConfig::parse(json)?;
+    pub async fn new(json: &str, monitor_interval: Option<u32>) -> Result<Self, ArunError> {
+        let arun_config = ArunConfig::parse(json, monitor_interval)?;
         jdebug!("Arun Config:\n{:?}", arun_config);
 
         let app = Docker::connect_with_socket_defaults()
@@ -268,7 +268,9 @@ impl Runner {
 
         let _ = input;
 
-        let mut itimer = IntervalTimer::new(tokio::time::Duration::from_secs(1));
+        let mut itimer = IntervalTimer::new(tokio::time::Duration::from_secs(
+            self.config.monitor_interval() as u64,
+        ));
         let mut old_state = self.state;
 
         let e = loop {
