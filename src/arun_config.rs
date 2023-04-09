@@ -56,6 +56,7 @@ pub struct ArunConfig {
     binds: Vec<String>,
     devices: Vec<ArunDeviceMapping>,
     environments: Vec<String>,
+    monitor_interval: Option<u32>,
 }
 
 impl Default for ArunConfig {
@@ -72,16 +73,27 @@ impl Default for ArunConfig {
             binds: Vec::new(),
             devices: Vec::new(),
             environments: Vec::new(),
+            monitor_interval: Some(1_u32),
         }
     }
 }
 
 impl ArunConfig {
-    pub fn parse(json: &str) -> Result<ArunConfig, ArunError> {
-        serde_json::from_str(json)
+    pub fn parse(json: &str, monitor_interval_s: Option<u32>) -> Result<ArunConfig, ArunError> {
+        let mut config: ArunConfig = serde_json::from_str(json)
             .into_report()
             .change_context(ArunError::InvalidValue)
-            .attach_printable(format!("Failed to parse json string:\n {}", json))
+            .attach_printable(format!("Failed to parse json string:\n {}", json))?;
+
+        if let Some(m) = monitor_interval_s {
+            config.monitor_interval = Some(m);
+        }
+
+        if config.monitor_interval.is_none() {
+            config.monitor_interval = Some(1_u32);
+        }
+
+        Ok(config)
     }
 
     pub fn image(&self) -> String {
@@ -137,5 +149,9 @@ impl ArunConfig {
         }
 
         result
+    }
+
+    pub fn monitor_interval(&self) -> u32 {
+        self.monitor_interval.unwrap()
     }
 }
