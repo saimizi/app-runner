@@ -1,0 +1,15 @@
+{
+  "name": "build",
+  "app_type": "User",
+  "image": "joukan/rpi4-appsdk",
+  "version": "latest",
+  "privilege": false,
+  "network": "none",
+  "cmd": "appsdk_qmake_build",
+  "gui": false,
+  "binds": [
+	  "/home/joukan/qtwork/qml_homepop_cpp/:/work/"
+  ],
+  "devices": [],
+  "environments": []
+}

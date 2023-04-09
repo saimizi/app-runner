@@ -1,0 +1,28 @@
+{
+  "name": "weston",
+  "app_type": "Sys",
+  "image": "joukan/rpi4-appimg",
+  "version": "0.1.0",
+  "privilege": false,
+  "network": "none",
+  "cmd": "/usr/bin/weston --tty=4 -Swayland-0",
+  "gui": true,
+  "binds": [
+	  "/run/user/0:/run/user/0:rw",
+	  "/run/udev/data:/run/udev/data:rw",
+	  "/etc/xdg/weston/weston.ini:/etc/xdg/weston/weston.ini:ro"
+  ],
+  "devices": [
+	  {
+		  "path_on_host":"/dev/dri/card0",
+		  "path_in_container":"/dev/dri/card0",
+		  "cgroup_permissions":"rwm"
+	  },
+	  {
+		  "path_on_host": "/dev/dri/card1",
+		  "path_in_container":"/dev/dri/card1",
+		  "cgroup_permissions":"rwm"
+	  }
+  ],
+  "environments": ["XDG_RUNTIME_DIR=/run/user/0"]
+}
