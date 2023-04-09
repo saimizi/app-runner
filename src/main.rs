@@ -44,5 +44,7 @@ async fn main() -> Result<(), ArunError> {
 
     jdebug!("Config:\n{}", json);
 
-    Runner::run(&json).await
+    let mut runner = Runner::new(json.as_str()).await?;
+
+    runner.run().await
 }

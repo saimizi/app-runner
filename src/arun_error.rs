@@ -4,6 +4,7 @@ use std::{error::Error, fmt::Display};
 pub enum ArunError {
     InvalidValue,
     DockerErr,
+    ConflictedWithOther,
     Unknown,
 }
 
@@ -12,6 +13,7 @@ impl Display for ArunError {
         let err_str = match self {
             ArunError::InvalidValue => "Invalid Parameter",
             ArunError::DockerErr => "Docker error",
+            ArunError::ConflictedWithOther => "Another app with same name exists",
             ArunError::Unknown => "Unknown error",
         };
 
