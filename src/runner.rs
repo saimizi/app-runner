@@ -14,12 +14,68 @@ use {
     serde_json,
 };
 
+use std::{collections::HashMap, fmt::Display, str::FromStr};
+
 use super::{
     arun_config::{ArunConfig, NetworkType},
     arun_error::ArunError,
 };
 
-pub struct Runner;
+#[derive(PartialEq, Eq, Debug)]
+pub enum RunnerState {
+    NonExist,
+    Created,
+    Running,
+    Restarting,
+    Exited,
+    Paused,
+    Dead,
+}
+
+impl Display for RunnerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state_str = match self {
+            RunnerState::NonExist => "NonExist",
+            RunnerState::Created => "Created",
+            RunnerState::Running => "Running",
+            RunnerState::Restarting => "Restarting",
+            RunnerState::Exited => "Exited",
+            RunnerState::Dead => "Dead",
+            RunnerState::Paused => "Paused",
+        };
+
+        write!(f, "{}", state_str)
+    }
+}
+
+impl FromStr for RunnerState {
+    type Err = ArunError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "created" => Ok(RunnerState::Created),
+            "running" => Ok(RunnerState::Running),
+            "restarting" => Ok(RunnerState::Restarting),
+            "exited" => Ok(RunnerState::Exited),
+            "paused" => Ok(RunnerState::Paused),
+            "dead" => Ok(RunnerState::Dead),
+            "nonExist" => Ok(RunnerState::NonExist),
+            _ => Err(ArunError::Unknown),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum PreCheckResult {
+    NormalState(RunnerState),
+    Conflicted,
+}
+
+pub struct Runner {
+    state: RunnerState,
+    docker: Docker,
+    config: ArunConfig,
+}
 
 impl Runner {
     pub fn host_config(arun_config: &ArunConfig) -> HostConfig {
@@ -37,52 +93,171 @@ impl Runner {
             ..Default::default()
         }
     }
-    pub async fn run(json: &str) -> Result<(), ArunError> {
+
+    async fn pre_check(docker: &Docker, config: &ArunConfig) -> Result<PreCheckResult, ArunError> {
+        let container_name = config.appid();
+
+        let mut filters = HashMap::new();
+        filters.insert("name", vec![container_name.as_str()]);
+
+        let options = container::ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        };
+
+        let summary = docker
+            .list_containers(Some(options))
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)?;
+
+        let mut state = RunnerState::NonExist;
+
+        if summary.is_empty() {
+            jdebug!("No container found for {}", container_name);
+        } else {
+            jdebug!("found container with name of {}", container_name);
+        }
+
+        for c in summary {
+            let image = c.image.ok_or(ArunError::DockerErr).into_report()?;
+            if image == config.image() {
+                let s = c.state.ok_or(ArunError::DockerErr).into_report()?;
+                let new_state = RunnerState::from_str(s.as_str())
+                    .into_report()
+                    .attach_printable(format!("Failed to recognize state {}", s))?;
+
+                if state != RunnerState::NonExist && state != new_state {
+                    return Err(ArunError::Unknown)
+                        .into_report()
+                        .attach_printable(format!(
+                            "Two state {} vs {} found for container with name {}.",
+                            state, new_state, container_name
+                        ));
+                }
+
+                state = new_state;
+                continue;
+            }
+
+            jwarn!(
+                "Another container with image {} is running with name {}",
+                image,
+                container_name
+            );
+
+            return Ok(PreCheckResult::Conflicted);
+        }
+
+        Ok(PreCheckResult::NormalState(state))
+    }
+
+    pub async fn new(json: &str) -> Result<Self, ArunError> {
+        let arun_config = ArunConfig::parse(json)?;
+        jdebug!("Arun Config:\n{:?}", arun_config);
+
         let app = Docker::connect_with_socket_defaults()
             .into_report()
             .change_context(ArunError::DockerErr)?;
 
-        let arun_config = ArunConfig::parse(json)?;
-
-        jdebug!("Arun Config:\n{:?}", arun_config);
-
-        let option = container::CreateContainerOptions {
-            name: arun_config.appid(),
-            platform: None,
+        let pre_check_result = Runner::pre_check(&app, &arun_config).await?;
+        let state = match pre_check_result {
+            PreCheckResult::NormalState(s) => s,
+            PreCheckResult::Conflicted => {
+                return Err(ArunError::ConflictedWithOther).into_report();
+            }
         };
 
-        let config = container::Config {
-            image: Some(arun_config.image()),
-            cmd: Some(arun_config.cmd()),
-            env: Some(arun_config.environment()),
-            host_config: Some(Runner::host_config(&arun_config)),
-            network_disabled: Some(arun_config.network() == NetworkType::none),
-            ..Default::default()
-        };
+        jdebug!(PreCheckState = state.to_string());
 
-        app.create_container(Some(option), config)
-            .await
-            .into_report()
-            .change_context(ArunError::DockerErr)?;
+        Ok(Self {
+            config: arun_config,
+            docker: app,
+            state,
+        })
+    }
 
-        let container_name = arun_config.appid();
+    pub async fn run(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
 
-        app.start_container::<String>(&container_name, None)
-            .await
-            .into_report()
-            .change_context(ArunError::DockerErr)?;
+        if self.state == RunnerState::Dead {
+            let options = container::RemoveContainerOptions {
+                v: true,
+                force: true,
+                link: true,
+            };
+
+            self.docker
+                .remove_container(container_name.as_str(), Some(options))
+                .await
+                .into_report()
+                .change_context(ArunError::DockerErr)
+                .attach_printable(format!(
+                    "Failed to remove the dead container {}",
+                    container_name
+                ))?;
+
+            self.state = RunnerState::NonExist;
+        }
+
+        if self.state == RunnerState::NonExist {
+            let option = container::CreateContainerOptions {
+                name: self.config.appid(),
+                platform: None,
+            };
+
+            let config = container::Config {
+                image: Some(self.config.image()),
+                cmd: Some(self.config.cmd()),
+                env: Some(self.config.environment()),
+                host_config: Some(Runner::host_config(&self.config)),
+                network_disabled: Some(self.config.network() == NetworkType::none),
+                ..Default::default()
+            };
+
+            self.docker
+                .create_container(Some(option), config)
+                .await
+                .into_report()
+                .change_context(ArunError::DockerErr)?;
+
+            self.state = RunnerState::Created;
+        }
+
+        if self.state == RunnerState::Created || self.state == RunnerState::Exited {
+            self.docker
+                .start_container::<String>(&container_name, None)
+                .await
+                .into_report()
+                .change_context(ArunError::DockerErr)?;
+            self.state = RunnerState::Running;
+        }
+
+        if self.state == RunnerState::Paused {
+            self.docker
+                .unpause_container(container_name.as_str())
+                .await
+                .into_report()
+                .change_context(ArunError::DockerErr)
+                .attach_printable(format!(
+                    "Failed to unpause the container {}",
+                    container_name
+                ))?;
+            self.state = RunnerState::Running;
+        }
 
         let options = container::WaitContainerOptions {
             condition: "not-running",
         };
 
-        let mut wait_stopped = app.wait_container(&container_name, Some(options));
+        let mut wait_stopped = self.docker.wait_container(&container_name, Some(options));
 
         let options = container::WaitContainerOptions {
             condition: "removed",
         };
 
-        let mut wait_removed = app.wait_container(&container_name, Some(options));
+        let mut wait_removed = self.docker.wait_container(&container_name, Some(options));
 
         let options = container::AttachContainerOptions::<String> {
             stdout: Some(true),
@@ -92,7 +267,8 @@ impl Runner {
             ..Default::default()
         };
 
-        let container::AttachContainerResults { mut output, input } = app
+        let container::AttachContainerResults { mut output, input } = self
+            .docker
             .attach_container(&container_name, Some(options))
             .await
             .into_report()
@@ -100,15 +276,13 @@ impl Runner {
 
         let _ = input;
 
-        loop {
+        let e = loop {
             tokio::select! {
                 Some(ret) = wait_stopped.next() => {
                     match ret {
                         Ok(_) => jinfo!(app=container_name, state="stopped"),
-                        Err(e) => jerror!(app=container_name, file=file!(), line=line!(), state="stopped", error=format!("{:?}", e)),
+                        Err(e) => break e,
                     }
-
-                    break;
                 },
 
                 Some(Ok(log)) = output.next() => {
@@ -118,26 +292,15 @@ impl Runner {
                 Some(ret) = wait_removed.next() => {
                     match ret {
                         Ok(_) => jinfo!(app=container_name, state="removed"),
-                        Err(e) => jerror!(app=container_name, file=file!(), line=line!(), state="removed", error=format!("{:?}", e)),
+                        Err(e) => break e,
                     }
-                    break;
                 },
 
             }
-        }
+        };
 
-        jdebug!("Remove container {}", container_name);
-
-        let options = Some(container::RemoveContainerOptions {
-            force: true,
-            ..Default::default()
-        });
-
-        app.remove_container(&container_name, options)
-            .await
+        Err(ArunError::DockerErr)
             .into_report()
-            .change_context(ArunError::DockerErr)?;
-
-        Ok(())
+            .attach_printable(format!("failed to wait container {:?}", e))
     }
 }
