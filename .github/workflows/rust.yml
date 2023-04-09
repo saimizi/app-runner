@@ -2,21 +2,45 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
+    strategy:
+      matrix:
+        arch: ["arm64", "amd64"]
 
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v3
+      - name: Setup Environment
+        run: |
+          if [ ${{matrix.arch}} = "arm64" ]; then
+            rustup target add  aarch64-unknown-linux-gnu
+            sudo apt install -y gcc-aarch64-linux-gnu
+            mkdir -p ${HOME}/.cargo
+            echo '[target.aarch64-unknown-linux-gnu]' >> ${HOME}/.cargo/config.toml
+            echo 'linker = "aarch64-linux-gnu-gcc"' >> ${HOME}/.cargo/config.toml
+          fi
+      - name: Build
+        run: |
+          if [ ${{matrix.arch}} = "amd64" ]; then
+            cargo build --verbose
+          elif [ ${{matrix.arch}} = "arm64" ]; then
+            cargo build --target aarch64-unknown-linux-gnu --verbose
+          fi
+        shell: bash
+      - name: Run tests
+        run: |
+          if [ ${{matrix.arch}} = "amd64" ]; then
+            cargo test --verbose
+          elif [ ${{matrix.arch}} = "arm64" ]; then
+            cargo test --target aarch64-unknown-linux-gnu --no-run
+          fi
+        shell: bash
