@@ -173,11 +173,11 @@ impl Runner {
     pub async fn run(&mut self) -> Result<(), ArunError> {
         let container_name = self.config.appid();
 
-        if self.state == RunnerState::Dead {
+        if self.state == RunnerState::Dead || self.state == RunnerState::Exited {
             let options = container::RemoveContainerOptions {
                 v: true,
                 force: true,
-                link: true,
+                link: false,
             };
 
             self.docker
@@ -186,7 +186,7 @@ impl Runner {
                 .into_report()
                 .change_context(ArunError::DockerErr)
                 .attach_printable(format!(
-                    "Failed to remove the dead container {}",
+                    "Failed to remove the previous exited container {}",
                     container_name
                 ))?;
 
@@ -217,7 +217,7 @@ impl Runner {
             self.state = RunnerState::Created;
         }
 
-        if self.state == RunnerState::Created || self.state == RunnerState::Exited {
+        if self.state == RunnerState::Created {
             self.docker
                 .start_container::<String>(&container_name, None)
                 .await
