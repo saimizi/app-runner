@@ -12,13 +12,13 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json,
+    std::{collections::HashMap, fmt::Display, str::FromStr},
 };
-
-use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use super::{
     arun_config::{ArunConfig, NetworkType},
     arun_error::ArunError,
+    ctlif::{ArunCtrl, ArunCtrlCmd},
     utils::IntervalTimer,
 };
 
@@ -292,12 +292,14 @@ impl Runner {
         ));
         let mut old_state = self.state;
 
-        let e = loop {
+        loop {
             tokio::select! {
                 Some(ret) = wait_stopped.next() => {
                     match ret {
                         Ok(_) => jinfo!(app=container_name, state="stopped"),
-                        Err(e) => break e,
+                        Err(_) => {
+                            return Err(ArunError::DockerErr).into_report();
+                        }
                     }
                 },
 
@@ -308,9 +310,27 @@ impl Runner {
                 Some(ret) = wait_removed.next() => {
                     match ret {
                         Ok(_) => jinfo!(app=container_name, state="removed"),
-                        Err(e) => break e,
+                        Err(_) => {
+                            return Err(ArunError::DockerErr).into_report();
+                        }
                     }
                 },
+
+                cmd = ArunCtrl::wait_cmd() => {
+                    match cmd {
+                        Ok(cmd) => {
+                            jinfo!(cmd=cmd.to_string());
+                            match cmd {
+                                ArunCtrlCmd::Quit => break,
+                                _=> {},
+                            }
+                        },
+                        Err(e) => {
+                            jwarn!("Failed to process command:\n {:?}", e);
+                        }
+                    }
+
+                }
 
                 _ = itimer.wait_timeup() => {
                     self.update_state().await?;
@@ -320,11 +340,11 @@ impl Runner {
                     }
 
                 }
-            }
-        };
 
-        Err(ArunError::DockerErr)
-            .into_report()
-            .attach_printable(format!("failed to wait container {:?}", e))
+
+            }
+        }
+
+        Ok(())
     }
 }
