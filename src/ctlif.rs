@@ -56,7 +56,9 @@ pub struct ArunCtrl {
 
 impl ArunCtrl {
     pub async fn create(name: &str) -> Result<Self, ArunError> {
+        #[allow(unused)]
         let name = format!("arun.{}", name);
+
         Ok(Self {
             #[cfg(feature = "ctlif-ipcon")]
             ih: AsyncIpcon::new(Some(&name), Some(IPF_RCV_IF))
@@ -71,6 +73,7 @@ impl ArunCtrl {
         {
             let mut itimer = IntervalTimer::new(time::Duration::from_secs(u64::MAX));
             itimer.wait_timeup().await;
+            cmd = ArunCtrlCmd::Invalid;
         }
 
         #[cfg(feature = "ctlif-ipcon")]
