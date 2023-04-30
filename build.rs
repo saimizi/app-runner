@@ -34,5 +34,4 @@ fn main() {
             println!("{}", cargo_search_path);
         }
     }
-
 }
