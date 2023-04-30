@@ -23,6 +23,21 @@ use {
 };
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+enum RunnerRequest {
+    UpdateState,
+}
+
+impl Display for RunnerRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let req_str = match self {
+            RunnerRequest::UpdateState => "RunnerRequest::UpdateState",
+        };
+
+        write!(f, "{}", req_str)
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum RunnerState {
     NonExist,
     Created,
@@ -68,6 +83,7 @@ impl FromStr for RunnerState {
 
 pub struct Runner {
     state: RunnerState,
+    target_state: RunnerState,
     docker: Docker,
     config: ArunConfig,
 }
@@ -176,6 +192,7 @@ impl Runner {
             config: arun_config,
             docker: app,
             state: RunnerState::NonExist,
+            target_state: RunnerState::NonExist,
         };
 
         runner.update_state().await?;
@@ -453,7 +470,8 @@ impl Runner {
     pub async fn run(&mut self) -> Result<(), ArunError> {
         let container_name = self.config.appid();
 
-        self.state_transition(RunnerState::Running).await?;
+        // Set initial target state to Running
+        self.target_state = RunnerState::Running;
 
         let options = container::AttachContainerOptions::<String> {
             stdout: Some(true),
@@ -477,7 +495,7 @@ impl Runner {
         ));
         let mut old_state = self.state;
         let mut ctrl = ArunCtrl::create(&self.config.appid()).await?;
-        let (sx, mut rx) = mpsc::channel::<RunnerState>(1);
+        let (sx, mut rx) = mpsc::channel::<RunnerRequest>(3);
 
         loop {
             tokio::select! {
@@ -492,20 +510,23 @@ impl Runner {
                             match cmd {
                                 ArunCtrlCmd::Quit => break,
                                 ArunCtrlCmd::Start => {
+                                    self.target_state =RunnerState::Running;
                                     sx
-                                        .send(RunnerState::Running)
+                                        .send(RunnerRequest::UpdateState)
                                         .await.into_report()
                                         .change_context(ArunError::IOError)?
                                 },
                                 ArunCtrlCmd::Stop => {
+                                    self.target_state = RunnerState::Exited;
                                     sx
-                                        .send(RunnerState::Exited)
+                                        .send(RunnerRequest::UpdateState)
                                         .await.into_report()
                                         .change_context(ArunError::IOError)?
                                 },
                                 ArunCtrlCmd::Remove => {
+                                    self.target_state = RunnerState::NonExist;
                                     sx
-                                        .send(RunnerState::NonExist)
+                                        .send(RunnerRequest::UpdateState)
                                         .await.into_report()
                                         .change_context(ArunError::IOError)?
                                 }
@@ -519,15 +540,25 @@ impl Runner {
 
                 }
 
-                state = rx.recv() => {
-                    if let Some(state) = state {
-                        jinfo!(State = self.state.to_string(),NextState = state.to_string());
-                        self.state_transition(state).await?;
+                request = rx.recv() => {
+                    if let Some(req) = request {
+                        match req {
+                            RunnerRequest::UpdateState => {
+                                self.state_transition(self.target_state).await?;
+                            }
+                        }
                     }
                 }
 
                 _ = itimer.wait_timeup() => {
                     self.update_state().await?;
+                    if self.state != self.target_state {
+                        sx
+                            .send(RunnerRequest::UpdateState)
+                            .await.into_report()
+                            .change_context(ArunError::IOError)?
+                    }
+
                     if self.state != old_state {
                         jinfo!(NewContainerState = self.state.to_string(),OldContainerState = old_state.to_string());
                         old_state = self.state;
