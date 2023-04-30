@@ -1,5 +1,11 @@
 #[allow(unused)]
 use {
+    super::{
+        arun_config::{ArunConfig, NetworkType},
+        arun_error::ArunError,
+        ctlif::{ArunCtrl, ArunCtrlCmd},
+        utils::IntervalTimer,
+    },
     bollard::{
         container, image,
         models::{DeviceMapping, HostConfig},
@@ -13,13 +19,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json,
     std::{collections::HashMap, fmt::Display, str::FromStr},
-};
-
-use super::{
-    arun_config::{ArunConfig, NetworkType},
-    arun_error::ArunError,
-    ctlif::{ArunCtrl, ArunCtrlCmd},
-    utils::IntervalTimer,
+    tokio::sync::mpsc,
 };
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -476,6 +476,8 @@ impl Runner {
             self.config.monitor_interval() as u64,
         ));
         let mut old_state = self.state;
+        let mut ctrl = ArunCtrl::create(&self.config.appid()).await?;
+        let (sx, mut rx) = mpsc::channel::<RunnerState>(1);
 
         loop {
             tokio::select! {
@@ -483,15 +485,30 @@ impl Runner {
                     jinfo!("{}", log.to_string().trim());
                 },
 
-                cmd = ArunCtrl::wait_cmd() => {
+                cmd = ctrl.wait_cmd() => {
                     match cmd {
                         Ok(cmd) => {
                             jinfo!(cmd=cmd.to_string());
                             match cmd {
                                 ArunCtrlCmd::Quit => break,
-                                ArunCtrlCmd::Start => self.state_transition(RunnerState::Running).await?,
-                                ArunCtrlCmd::Stop => self.state_transition(RunnerState::Exited).await?,
-                                ArunCtrlCmd::Remove => self.state_transition(RunnerState::NonExist).await?,
+                                ArunCtrlCmd::Start => {
+                                    sx
+                                        .send(RunnerState::Running)
+                                        .await.into_report()
+                                        .change_context(ArunError::IOError)?
+                                },
+                                ArunCtrlCmd::Stop => {
+                                    sx
+                                        .send(RunnerState::Exited)
+                                        .await.into_report()
+                                        .change_context(ArunError::IOError)?
+                                },
+                                ArunCtrlCmd::Remove => {
+                                    sx
+                                        .send(RunnerState::NonExist)
+                                        .await.into_report()
+                                        .change_context(ArunError::IOError)?
+                                }
                                 _=> {},
                             }
                         },
@@ -500,6 +517,13 @@ impl Runner {
                         }
                     }
 
+                }
+
+                state = rx.recv() => {
+                    if let Some(state) = state {
+                        jinfo!(State = self.state.to_string(),NextState = state.to_string());
+                        self.state_transition(state).await?;
+                    }
                 }
 
                 _ = itimer.wait_timeup() => {

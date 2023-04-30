@@ -26,10 +26,6 @@ use ipcon_sys::{
     ipcon_msg::IpconMsg,
 };
 
-#[cfg(feature = "ctlif-ipcon")]
-static IH: Lazy<AsyncIpcon> =
-    Lazy::new(|| AsyncIpcon::new(Some("Arun"), Some(IPF_RCV_IF)).unwrap());
-
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ArunCtrlCmd {
     Start,
@@ -53,10 +49,22 @@ impl Display for ArunCtrlCmd {
     }
 }
 
-pub struct ArunCtrl;
+pub struct ArunCtrl {
+    #[cfg(feature = "ctlif-ipcon")]
+    ih: AsyncIpcon,
+}
 
 impl ArunCtrl {
-    pub async fn wait_cmd() -> Result<ArunCtrlCmd, ArunError> {
+    pub async fn create(name: &str) -> Result<Self, ArunError> {
+        let name = format!("arun.{}", name);
+        Ok(Self {
+            #[cfg(feature = "ctlif-ipcon")]
+            ih: AsyncIpcon::new(Some(&name), Some(IPF_RCV_IF))
+                .change_context(ArunError::IpconError)?,
+        })
+    }
+
+    pub async fn wait_cmd(&mut self) -> Result<ArunCtrlCmd, ArunError> {
         let cmd: ArunCtrlCmd;
 
         #[cfg(not(feature = "ctlif-ipcon"))]
@@ -67,7 +75,8 @@ impl ArunCtrl {
 
         #[cfg(feature = "ctlif-ipcon")]
         {
-            match IH
+            match self
+                .ih
                 .receive_msg()
                 .await
                 .change_context(ArunError::IpconError)?

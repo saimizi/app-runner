@@ -7,6 +7,8 @@ pub enum ArunError {
     ConflictedWithOther,
     #[cfg(feature = "ctlif-ipcon")]
     IpconError,
+
+    IOError,
     Unknown,
 }
 
@@ -20,6 +22,7 @@ impl Display for ArunError {
             #[cfg(feature = "ctlif-ipcon")]
             ArunError::IpconError => "Ipcon error",
 
+            ArunError::IOError => "IO error",
             ArunError::Unknown => "Unknown error",
         };
 
