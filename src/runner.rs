@@ -184,91 +184,276 @@ impl Runner {
         Ok(runner)
     }
 
+    pub async fn create(&mut self) -> Result<(), ArunError> {
+        let option = container::CreateContainerOptions {
+            name: self.config.appid(),
+            platform: None,
+        };
+
+        let mut env = self.config.environment();
+        if self.config.wayland() {
+            env.push("XDG_RUNTIME_DIR=/run/user/0".to_owned());
+        }
+
+        let config = container::Config {
+            image: Some(self.config.image()),
+            cmd: Some(self.config.cmd()),
+            env: Some(env),
+            host_config: Some(Runner::host_config(&self.config)),
+            network_disabled: Some(self.config.network() == NetworkType::none),
+            ..Default::default()
+        };
+
+        self.docker
+            .create_container(Some(option), config)
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)?;
+
+        self.state = RunnerState::Created;
+
+        Ok(())
+    }
+
+    pub async fn start(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
+
+        self.docker
+            .start_container::<String>(&container_name, None)
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)?;
+
+        self.state = RunnerState::Running;
+        Ok(())
+    }
+
+    pub async fn stop(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
+        let options = container::StopContainerOptions { t: 1_i64 };
+
+        self.docker
+            .stop_container(&container_name, Some(options))
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)?;
+
+        self.state = RunnerState::Exited;
+        Ok(())
+    }
+
+    pub async fn pause(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
+
+        self.docker
+            .pause_container(container_name.as_str())
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable(format!(
+                "Failed to unpause the container {}",
+                container_name
+            ))?;
+
+        self.state = RunnerState::Paused;
+        Ok(())
+    }
+
+    pub async fn unpause(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
+
+        self.docker
+            .unpause_container(container_name.as_str())
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable(format!(
+                "Failed to unpause the container {}",
+                container_name
+            ))?;
+
+        self.state = RunnerState::Running;
+        Ok(())
+    }
+
+    pub async fn remove(&mut self) -> Result<(), ArunError> {
+        let container_name = self.config.appid();
+        let options = container::RemoveContainerOptions {
+            v: true,
+            force: true,
+            link: false,
+        };
+
+        self.docker
+            .remove_container(container_name.as_str(), Some(options))
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable(format!(
+                "Failed to remove the previous exited container {}",
+                container_name
+            ))?;
+
+        self.state = RunnerState::NonExist;
+
+        Ok(())
+    }
+
+    pub async fn state_transition(&mut self, target: RunnerState) -> Result<(), ArunError> {
+        self.update_state().await?;
+        if self.state == target {
+            return Ok(());
+        }
+
+        if target == RunnerState::NonExist {
+            match self.state {
+                RunnerState::NonExist => {}
+                RunnerState::Created => {
+                    self.remove().await?;
+                }
+                RunnerState::Running => {
+                    self.stop().await?;
+                    self.remove().await?;
+                }
+                RunnerState::Restarting => {
+                    self.stop().await?;
+                    self.remove().await?;
+                }
+                RunnerState::Exited => {
+                    self.remove().await?;
+                }
+                RunnerState::Paused => {
+                    self.remove().await?;
+                }
+                RunnerState::Dead => {
+                    self.remove().await?;
+                }
+            }
+        }
+
+        if target == RunnerState::Created {
+            match self.state {
+                RunnerState::NonExist => {
+                    self.create().await?;
+                }
+                RunnerState::Created => {}
+                RunnerState::Running => {
+                    self.stop().await?;
+                }
+                RunnerState::Restarting => {
+                    self.stop().await?;
+                }
+                RunnerState::Exited => {
+                    self.remove().await?;
+                    self.create().await?;
+                }
+                RunnerState::Paused => {
+                    self.remove().await?;
+                    self.create().await?;
+                }
+                RunnerState::Dead => {
+                    self.create().await?;
+                }
+            }
+        }
+
+        if target == RunnerState::Running {
+            match self.state {
+                RunnerState::NonExist => {
+                    self.create().await?;
+                    self.start().await?;
+                }
+                RunnerState::Created => {
+                    self.start().await?;
+                }
+                RunnerState::Running => {}
+                RunnerState::Restarting => {}
+                RunnerState::Exited => {
+                    self.remove().await?;
+                    self.create().await?;
+                    self.start().await?;
+                }
+                RunnerState::Paused => {
+                    self.unpause().await?;
+                }
+                RunnerState::Dead => {
+                    self.remove().await?;
+                    self.create().await?;
+                    self.start().await?;
+                }
+            }
+        }
+
+        if target == RunnerState::Restarting {}
+
+        if target == RunnerState::Exited {
+            match self.state {
+                RunnerState::NonExist => {
+                    self.create().await?;
+                    self.start().await?;
+                    self.stop().await?;
+                }
+                RunnerState::Created => {
+                    self.start().await?;
+                    self.stop().await?;
+                }
+                RunnerState::Running => {
+                    self.stop().await?;
+                }
+                RunnerState::Restarting => {
+                    self.stop().await?;
+                }
+                RunnerState::Exited => {}
+                RunnerState::Paused => {
+                    self.stop().await?;
+                }
+                RunnerState::Dead => {
+                    self.remove().await?;
+                    self.create().await?;
+                    self.start().await?;
+                    self.stop().await?;
+                }
+            }
+        }
+
+        if target == RunnerState::Paused {
+            match self.state {
+                RunnerState::NonExist => {
+                    self.create().await?;
+                    self.start().await?;
+                    self.pause().await?;
+                }
+                RunnerState::Created => {
+                    self.start().await?;
+                    self.pause().await?;
+                }
+                RunnerState::Running => {
+                    self.pause().await?;
+                }
+                RunnerState::Restarting => {
+                    self.pause().await?;
+                }
+                RunnerState::Exited => {
+                    self.start().await?;
+                    self.pause().await?;
+                }
+                RunnerState::Paused => {}
+                RunnerState::Dead => {
+                    self.remove().await?;
+                    self.create().await?;
+                    self.start().await?;
+                    self.pause().await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> Result<(), ArunError> {
         let container_name = self.config.appid();
 
-        if self.state == RunnerState::Dead || self.state == RunnerState::Exited {
-            let options = container::RemoveContainerOptions {
-                v: true,
-                force: true,
-                link: false,
-            };
-
-            self.docker
-                .remove_container(container_name.as_str(), Some(options))
-                .await
-                .into_report()
-                .change_context(ArunError::DockerErr)
-                .attach_printable(format!(
-                    "Failed to remove the previous exited container {}",
-                    container_name
-                ))?;
-
-            self.state = RunnerState::NonExist;
-        }
-
-        if self.state == RunnerState::NonExist {
-            let option = container::CreateContainerOptions {
-                name: self.config.appid(),
-                platform: None,
-            };
-
-            let mut env = self.config.environment();
-            if self.config.wayland() {
-                env.push("XDG_RUNTIME_DIR=/run/user/0".to_owned());
-            }
-
-            let config = container::Config {
-                image: Some(self.config.image()),
-                cmd: Some(self.config.cmd()),
-                env: Some(env),
-                host_config: Some(Runner::host_config(&self.config)),
-                network_disabled: Some(self.config.network() == NetworkType::none),
-                ..Default::default()
-            };
-
-            self.docker
-                .create_container(Some(option), config)
-                .await
-                .into_report()
-                .change_context(ArunError::DockerErr)?;
-
-            self.state = RunnerState::Created;
-        }
-
-        if self.state == RunnerState::Created {
-            self.docker
-                .start_container::<String>(&container_name, None)
-                .await
-                .into_report()
-                .change_context(ArunError::DockerErr)?;
-            self.state = RunnerState::Running;
-        }
-
-        if self.state == RunnerState::Paused {
-            self.docker
-                .unpause_container(container_name.as_str())
-                .await
-                .into_report()
-                .change_context(ArunError::DockerErr)
-                .attach_printable(format!(
-                    "Failed to unpause the container {}",
-                    container_name
-                ))?;
-            self.state = RunnerState::Running;
-        }
-
-        let options = container::WaitContainerOptions {
-            condition: "not-running",
-        };
-
-        let mut wait_stopped = self.docker.wait_container(&container_name, Some(options));
-
-        let options = container::WaitContainerOptions {
-            condition: "removed",
-        };
-
-        let mut wait_removed = self.docker.wait_container(&container_name, Some(options));
+        self.state_transition(RunnerState::Running).await?;
 
         let options = container::AttachContainerOptions::<String> {
             stdout: Some(true),
@@ -294,26 +479,8 @@ impl Runner {
 
         loop {
             tokio::select! {
-                Some(ret) = wait_stopped.next() => {
-                    match ret {
-                        Ok(_) => jinfo!(app=container_name, state="stopped"),
-                        Err(_) => {
-                            return Err(ArunError::DockerErr).into_report();
-                        }
-                    }
-                },
-
                 Some(Ok(log)) = output.next() => {
                     jinfo!("{}", log.to_string().trim());
-                },
-
-                Some(ret) = wait_removed.next() => {
-                    match ret {
-                        Ok(_) => jinfo!(app=container_name, state="removed"),
-                        Err(_) => {
-                            return Err(ArunError::DockerErr).into_report();
-                        }
-                    }
                 },
 
                 cmd = ArunCtrl::wait_cmd() => {
@@ -322,6 +489,9 @@ impl Runner {
                             jinfo!(cmd=cmd.to_string());
                             match cmd {
                                 ArunCtrlCmd::Quit => break,
+                                ArunCtrlCmd::Start => self.state_transition(RunnerState::Running).await?,
+                                ArunCtrlCmd::Stop => self.state_transition(RunnerState::Exited).await?,
+                                ArunCtrlCmd::Remove => self.state_transition(RunnerState::NonExist).await?,
                                 _=> {},
                             }
                         },
@@ -337,6 +507,8 @@ impl Runner {
                     if self.state != old_state {
                         jinfo!(NewContainerState = self.state.to_string(),OldContainerState = old_state.to_string());
                         old_state = self.state;
+                    } else {
+                        jinfo!(state=self.state.to_string());
                     }
 
                 }
