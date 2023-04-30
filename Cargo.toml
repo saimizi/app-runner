@@ -5,22 +5,22 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name="arunlib"
-path="src/lib.rs"
+name = "arunlib"
+path = "src/lib.rs"
 
 
 [[bin]]
-name="arun"
-path="src/main.rs"
+name = "arun"
+path = "src/main.rs"
 
 [dependencies]
-clap = { version= "3.1", features=["derive"] }
+clap = { version = "3.1", features = ["derive"] }
 error-stack = { version = "0.3.1", features = ["anyhow", "serde"] }
 jlogger-tracing = "0.1.4"
 
-tokio = { version="1.27.0", features=["full"] }
+tokio = { version = "1.27.0", features = ["full"] }
 tokio-stream = "0.1"
-futures = {version="0.3.21", features=["executor", "thread-pool"]}
+futures = { version = "0.3.21", features = ["executor", "thread-pool"] }
 
 tracing = "0.1.37"
 serde = { version = "1.0.151", features = ["derive", "serde_derive"] }
@@ -29,6 +29,19 @@ serde_json = "1.0.95"
 bollard = "0.14.0"
 futures-util = "0.3.28"
 serde_derive = "1.0.159"
+ipcon-sys = { version = "0.2.2", features = [
+  "async",
+  "tokio",
+  "futures",
+], optional = true }
+once_cell = "1.17.1"
+
+[features]
+default = ["ctlif-ipcon"]
+ctlif-ipcon = ["ipcon-sys"]
+
+[build-dependencies]
+jlogger-tracing = "0.1.4"
 
 [profile.dev]
 opt-level = 1

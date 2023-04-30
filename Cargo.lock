@@ -26,7 +26,9 @@ dependencies = [
  "error-stack",
  "futures",
  "futures-util",
+ "ipcon-sys",
  "jlogger-tracing",
+ "once_cell",
  "serde",
  "serde_derive",
  "serde_json",
@@ -536,6 +538,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipcon-sys"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74850495e0240b4d701fe770a25fab7d8cb843ecf70a35f5361a3a037786106"
+dependencies = [
+ "error-stack",
+ "futures",
+ "jlogger-tracing",
+ "libc",
+ "nix",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -617,6 +634,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
+name = "memoffset"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "mio"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -626,6 +652,19 @@ dependencies = [
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys",
+]
+
+[[package]]
+name = "nix"
+version = "0.22.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4916f159ed8e5de0082076562152a76b7a1f64a01fd9d1e0fea002c37624faf"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if",
+ "libc",
+ "memoffset",
 ]
 
 [[package]]

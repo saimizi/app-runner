@@ -5,6 +5,8 @@ pub enum ArunError {
     InvalidValue,
     DockerErr,
     ConflictedWithOther,
+    #[cfg(feature = "ctlif-ipcon")]
+    IpconError,
     Unknown,
 }
 
@@ -14,6 +16,10 @@ impl Display for ArunError {
             ArunError::InvalidValue => "Invalid Parameter",
             ArunError::DockerErr => "Docker error",
             ArunError::ConflictedWithOther => "Another app with same name exists",
+
+            #[cfg(feature = "ctlif-ipcon")]
+            ArunError::IpconError => "Ipcon error",
+
             ArunError::Unknown => "Unknown error",
         };
 
