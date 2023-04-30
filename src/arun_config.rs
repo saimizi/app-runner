@@ -52,9 +52,8 @@ pub struct ArunConfig {
     privilege: bool,
     network: NetworkType,
     cmd: String,
-    gui: bool,
     binds: Vec<String>,
-    devices: Vec<ArunDeviceMapping>,
+    features: Vec<String>,
     environments: Vec<String>,
     monitor_interval: Option<u32>,
 }
@@ -69,9 +68,8 @@ impl Default for ArunConfig {
             privilege: false,
             network: NetworkType::none,
             cmd: "Invalid".to_string(),
-            gui: false,
             binds: Vec::new(),
-            devices: Vec::new(),
+            features: Vec::new(),
             environments: Vec::new(),
             monitor_interval: Some(1_u32),
         }
@@ -121,10 +119,6 @@ impl ArunConfig {
         cmd
     }
 
-    pub fn binds(&self) -> Vec<String> {
-        self.binds.clone()
-    }
-
     pub fn environment(&self) -> Vec<String> {
         self.environments.clone()
     }
@@ -133,22 +127,16 @@ impl ArunConfig {
         self.privilege
     }
 
-    pub fn gui(&self) -> bool {
-        self.gui
+    pub fn binds(&self) -> Vec<&str> {
+        self.binds.iter().map(|s| s.as_str()).collect()
     }
 
-    pub fn devices(&self) -> Vec<DeviceMapping> {
-        let mut result = Vec::new();
+    pub fn gui(&self) -> bool {
+        self.features.iter().any(|f| f.as_str() == "tui")
+    }
 
-        for d in &self.devices {
-            result.push(DeviceMapping {
-                path_on_host: Some(d.path_on_host.clone()),
-                path_in_container: Some(d.path_in_container.clone()),
-                cgroup_permissions: Some(d.cgroup_permissions.clone()),
-            });
-        }
-
-        result
+    pub fn wayland(&self) -> bool {
+        self.features.iter().any(|f| f.as_str() == "wayland")
     }
 
     pub fn monitor_interval(&self) -> u32 {

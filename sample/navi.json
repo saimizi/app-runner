@@ -1,0 +1,12 @@
+{
+  "name": "navi",
+  "app_type": "User",
+  "image": "joukan/rpi4-appimg",
+  "version": "0.1.0",
+  "privilege": true,
+  "network": "none",
+  "cmd": "/usr/bin/EGLWLMockNavigation",
+  "features": [ "gui", "wayland" ],
+  "binds": [],
+  "environments": ["XDG_RUNTIME_DIR=/run/user/0"]
+}

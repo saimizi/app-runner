@@ -1,15 +1,14 @@
 {
-  "name": "weston",
+  "name": "jswm",
   "app_type": "Sys",
   "image": "joukan/rpi4-appimg",
   "version": "0.1.0",
   "privilege": true,
   "network": "none",
-  "cmd": "/usr/bin/weston --tty=4 -Swayland-0",
+  "cmd": "/usr/bin/jswm",
   "features": [ "gui" ],
   "binds": [
-	  "/run/user/0:/run/user/0:rw",
-	  "/run/udev/data:/run/udev/data:rw"
+	  "/run/user/0:/run/user/0:rw"
   ],
   "environments": ["XDG_RUNTIME_DIR=/run/user/0"]
 }

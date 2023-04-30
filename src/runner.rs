@@ -74,17 +74,31 @@ pub struct Runner {
 
 impl Runner {
     pub fn host_config(arun_config: &ArunConfig) -> HostConfig {
-        let binds = arun_config.binds();
-        let devices = arun_config.devices();
+        let mut device_mapping = vec![];
+
+        let mut binds: Vec<String> = arun_config.binds().iter().map(|s| s.to_string()).collect();
+
+        // A privileged container dose not need a specific device mapping.
+        if !arun_config.privilege() && arun_config.gui() {
+            let drm_device = vec!["/dev/dri/card0", "/dev/dri/card1"];
+
+            drm_device.iter().for_each(|d| {
+                device_mapping.push(DeviceMapping {
+                    path_on_host: Some(d.to_string()),
+                    path_in_container: Some(d.to_string()),
+                    cgroup_permissions: Some("rwm".to_string()),
+                });
+            });
+        }
+
+        if arun_config.wayland() {
+            binds.push("/run/user/0:/run/user/0:rw".to_owned());
+        }
 
         HostConfig {
-            binds: if binds.is_empty() { None } else { Some(binds) },
+            binds: Some(binds),
             privileged: Some(arun_config.privilege()),
-            devices: if devices.is_empty() {
-                None
-            } else {
-                Some(devices)
-            },
+            devices: Some(device_mapping),
             ..Default::default()
         }
     }
@@ -199,10 +213,15 @@ impl Runner {
                 platform: None,
             };
 
+            let mut env = self.config.environment();
+            if self.config.wayland() {
+                env.push("XDG_RUNTIME_DIR=/run/user/0".to_owned());
+            }
+
             let config = container::Config {
                 image: Some(self.config.image()),
                 cmd: Some(self.config.cmd()),
-                env: Some(self.config.environment()),
+                env: Some(env),
                 host_config: Some(Runner::host_config(&self.config)),
                 network_disabled: Some(self.config.network() == NetworkType::none),
                 ..Default::default()
