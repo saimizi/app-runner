@@ -1,10 +1,12 @@
+pub mod arun;
+
 #[allow(unused)]
 use {
-    arunlib::{
+    arun::{
         arun_config::{AppType, ArunConfig, NetworkType},
-        arun_error::ArunError,
         runner::Runner,
     },
+    arunlib::arun_error::ArunError,
     clap::Parser,
     error_stack::{IntoReport, Report, Result, ResultExt},
     jlogger_tracing::{

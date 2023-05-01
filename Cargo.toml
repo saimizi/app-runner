@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "arunlib"
-path = "src/lib.rs"
+path = "src/arunlib/lib.rs"
 
 
 [[bin]]
 name = "arun"
-path = "src/main.rs"
+path = "src/arun_main.rs"
 
 [dependencies]
 clap = { version = "3.1", features = ["derive"] }
