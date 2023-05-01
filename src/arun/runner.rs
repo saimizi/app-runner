@@ -9,7 +9,7 @@ use {
     arunlib::{arun_error::ArunError, utils::IntervalTimer},
     bollard::{
         container, image,
-        models::{DeviceMapping, HostConfig},
+        models::{CreateImageInfo, DeviceMapping, HostConfig},
         Docker,
     },
     error_stack::{IntoReport, Report, Result, ResultExt},
@@ -90,6 +90,50 @@ pub struct Runner {
 }
 
 impl Runner {
+    pub async fn find_image(&self) -> Result<bool, ArunError> {
+        let mut found = false;
+        let options = image::ListImagesOptions::<String> {
+            all: true,
+            ..Default::default()
+        };
+
+        let summary = self
+            .docker
+            .list_images(Some(options))
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable("Failed to get docker images")?;
+
+        let image = &self.config.image();
+        summary.iter().for_each(|s| {
+            jdebug!("check: {:?}", s.repo_tags);
+            if s.repo_tags.iter().any(|t| t == image) {
+                found = true;
+            }
+        });
+
+        Ok(found)
+    }
+
+    pub async fn install(&self) -> Result<(), ArunError> {
+        let options = image::CreateImageOptions::<String> {
+            from_image: self.config.image_name().to_string(),
+            tag: self.config.image_version().to_string(),
+            platform: "linux/arm64".to_string(),
+            ..Default::default()
+        };
+
+        let mut stream = self.docker.create_image(Some(options), None, None);
+
+        while let Some(item) = stream.next().await {
+            let info = item.into_report().change_context(ArunError::DockerErr)?;
+            jinfo!("{:?}", info);
+        }
+
+        Ok(())
+    }
+
     pub fn host_config(arun_config: &ArunConfig) -> HostConfig {
         let mut device_mapping = vec![];
         let mut cgroup_rules: Vec<String> = vec![];
@@ -497,6 +541,11 @@ impl Runner {
     }
 
     pub async fn run(&mut self) -> Result<(), ArunError> {
+        if !self.find_image().await? {
+            jinfo!("Install image {}", self.config.image());
+            self.install().await?;
+        }
+
         // Set initial target state to Running
         self.target_state = RunnerState::Running;
 

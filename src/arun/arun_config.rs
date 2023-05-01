@@ -98,6 +98,14 @@ impl ArunConfig {
         format!("{}:{}", self.image, self.version)
     }
 
+    pub fn image_name(&self) -> &str {
+        &self.image
+    }
+
+    pub fn image_version(&self) -> &str {
+        &self.version
+    }
+
     pub fn appid(&self) -> String {
         format!("{}.{}", self.app_type, self.name)
     }
