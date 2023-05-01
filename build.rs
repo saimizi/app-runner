@@ -35,5 +35,5 @@ fn main() {
         }
     }
 
-   println!("cargo:rustc-link-arg=-Wl,-soname=libarunlib.so.0.0.0");
+    println!("cargo:rustc-link-arg=-Wl,-soname=libarunlib.so.0.0.0");
 }

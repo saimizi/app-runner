@@ -116,7 +116,7 @@ impl ArunCtrl {
                 }
 
                 jdebug!("ArunCtrl thread quit");
-                return Ok(());
+                Ok(())
             });
 
             Ok(Self {
