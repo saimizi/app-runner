@@ -7,6 +7,7 @@ edition = "2021"
 [lib]
 name = "arunlib"
 path = "src/arunlib/lib.rs"
+crate-type=["cdylib", "rlib"]
 
 
 [[bin]]

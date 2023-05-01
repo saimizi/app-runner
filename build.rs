@@ -34,4 +34,6 @@ fn main() {
             println!("{}", cargo_search_path);
         }
     }
+
+   println!("cargo:rustc-link-arg=-Wl,-soname=libarunlib.so.0.0.0");
 }
