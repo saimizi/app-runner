@@ -92,30 +92,40 @@ pub struct Runner {
 impl Runner {
     pub fn host_config(arun_config: &ArunConfig) -> HostConfig {
         let mut device_mapping = vec![];
+        let mut cgroup_rules: Vec<String> = vec![];
 
         let mut binds: Vec<String> = arun_config.binds().iter().map(|s| s.to_string()).collect();
 
         // A privileged container dose not need a specific device mapping.
+        // 1. Map /dev/dri/cardX to container
+        // 2. Create cgroup rules to allow /dev/dri/cardX access
         if !arun_config.privilege() && arun_config.gui() {
             let drm_device = vec!["/dev/dri/card0", "/dev/dri/card1"];
 
-            drm_device.iter().for_each(|d| {
+            drm_device.iter().for_each(|&d| {
                 device_mapping.push(DeviceMapping {
                     path_on_host: Some(d.to_string()),
                     path_in_container: Some(d.to_string()),
                     cgroup_permissions: Some("rwm".to_string()),
                 });
             });
+
+            // Major number of /dev/dri/cardX
+            cgroup_rules.push("c 226:* rmw".to_owned());
         }
 
         if arun_config.wayland() {
             binds.push("/run/user/0:/run/user/0:rw".to_owned());
         }
 
+        jdebug!("Device Mapping: {:?}", device_mapping);
+        jdebug!("Device Cgroup Rules: {:?}", cgroup_rules);
+
         HostConfig {
             binds: Some(binds),
             privileged: Some(arun_config.privilege()),
             devices: Some(device_mapping),
+            device_cgroup_rules: Some(cgroup_rules),
             ..Default::default()
         }
     }

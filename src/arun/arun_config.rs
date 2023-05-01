@@ -132,7 +132,7 @@ impl ArunConfig {
     }
 
     pub fn gui(&self) -> bool {
-        self.features.iter().any(|f| f.as_str() == "tui")
+        self.features.iter().any(|f| f.as_str() == "gui")
     }
 
     pub fn wayland(&self) -> bool {
