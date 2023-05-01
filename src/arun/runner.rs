@@ -1,3 +1,5 @@
+use bollard::container::AttachContainerResults;
+
 #[allow(unused)]
 use {
     super::{
@@ -466,11 +468,8 @@ impl Runner {
         Ok(())
     }
 
-    pub async fn run(&mut self) -> Result<(), ArunError> {
+    pub async fn attach(&self) -> Result<AttachContainerResults, ArunError> {
         let container_name = self.config.appid();
-
-        // Set initial target state to Running
-        self.target_state = RunnerState::Running;
 
         let options = container::AttachContainerOptions::<String> {
             stdout: Some(true),
@@ -480,14 +479,16 @@ impl Runner {
             ..Default::default()
         };
 
-        let container::AttachContainerResults { mut output, input } = self
-            .docker
+        self.docker
             .attach_container(&container_name, Some(options))
             .await
             .into_report()
-            .change_context(ArunError::DockerErr)?;
+            .change_context(ArunError::DockerErr)
+    }
 
-        let _ = input;
+    pub async fn run(&mut self) -> Result<(), ArunError> {
+        // Set initial target state to Running
+        self.target_state = RunnerState::Running;
 
         let mut itimer = IntervalTimer::new(tokio::time::Duration::from_secs(
             self.config.monitor_interval() as u64,
@@ -498,45 +499,28 @@ impl Runner {
 
         loop {
             tokio::select! {
-                Some(Ok(log)) = output.next() => {
-                    jinfo!("{}", log.to_string().trim());
-                },
-
                 cmd = ctrl.wait_cmd() => {
-                    match cmd {
-                        Ok(cmd) => {
-                            jinfo!(cmd=cmd.to_string());
-                            match cmd {
-                                ArunCtrlCmd::Quit => break,
-                                ArunCtrlCmd::Start => {
-                                    self.target_state =RunnerState::Running;
-                                    sx
-                                        .send(RunnerRequest::UpdateState)
-                                        .await.into_report()
-                                        .change_context(ArunError::IOError)?
-                                },
-                                ArunCtrlCmd::Stop => {
-                                    self.target_state = RunnerState::Exited;
-                                    sx
-                                        .send(RunnerRequest::UpdateState)
-                                        .await.into_report()
-                                        .change_context(ArunError::IOError)?
-                                },
-                                ArunCtrlCmd::Remove => {
-                                    self.target_state = RunnerState::NonExist;
-                                    sx
-                                        .send(RunnerRequest::UpdateState)
-                                        .await.into_report()
-                                        .change_context(ArunError::IOError)?
-                                }
+                    let mut quit = false;
+
+                    match cmd.unwrap_or(ArunCtrlCmd::Quit) {
+                                ArunCtrlCmd::Quit => quit = true,
+                                ArunCtrlCmd::Start =>
+                                    self.target_state =RunnerState::Running,
+                                ArunCtrlCmd::Stop =>
+                                    self.target_state = RunnerState::Exited,
+                                ArunCtrlCmd::Remove =>
+                                    self.target_state = RunnerState::NonExist,
                                 _=> {},
-                            }
-                        },
-                        Err(e) => {
-                            jwarn!("Failed to process command:\n {:?}", e);
-                        }
                     }
 
+                    if quit {
+                        ctrl.exit().await;
+                        break;
+                    }
+
+                    sx.send(RunnerRequest::UpdateState)
+                        .await.into_report()
+                        .change_context(ArunError::IOError)?
                 }
 
                 request = rx.recv() => {
