@@ -1,15 +1,13 @@
-use bollard::container::AttachContainerResults;
-
 #[allow(unused)]
 use {
     super::{
-        arun_config::{ArunConfig, NetworkType},
+        arun_config::ArunConfig,
         ctlif::{ArunCtrl, ArunCtrlCmd},
     },
     arunlib::{arun_error::ArunError, utils::IntervalTimer},
     bollard::{
         container, image,
-        models::{CreateImageInfo, DeviceMapping, HostConfig},
+        models::{CreateImageInfo, DeviceMapping, HostConfig, PortBinding},
         Docker,
     },
     error_stack::{IntoReport, Report, Result, ResultExt},
@@ -17,6 +15,7 @@ use {
     jlogger_tracing::{
         jdebug, jerror, jinfo, jtrace, jwarn, JloggerBuilder, LevelFilter, LogTimeFormat,
     },
+    regex::Regex,
     serde::{Deserialize, Serialize},
     serde_json,
     std::{collections::HashMap, fmt::Display, str::FromStr},
@@ -134,7 +133,7 @@ impl Runner {
         Ok(())
     }
 
-    pub fn host_config(arun_config: &ArunConfig) -> HostConfig {
+    pub fn host_config(arun_config: &ArunConfig) -> Result<HostConfig, ArunError> {
         let mut device_mapping = vec![];
         let mut cgroup_rules: Vec<String> = vec![];
 
@@ -165,13 +164,44 @@ impl Runner {
         jdebug!("Device Mapping: {:?}", device_mapping);
         jdebug!("Device Cgroup Rules: {:?}", cgroup_rules);
 
-        HostConfig {
+        let mut pb: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        if let Some(ports) = arun_config.port_bindings() {
+            for p in ports {
+                let mut host: Vec<PortBinding> = Vec::new();
+                let key = p.port.clone();
+
+                for h in &p.host {
+                    let re = Regex::new(r"([0-9|.]+):([0-9]+)")
+                        .into_report()
+                        .change_context(ArunError::Unknown)?;
+
+                    if !re.is_match(h) {
+                        return Err(ArunError::InvalidValue)
+                            .into_report()
+                            .attach_printable(format!("Invalid host network port: {}", h));
+                    }
+
+                    let c = re.captures(h).unwrap();
+                    let host_ip = Some(c[1].to_string());
+                    let host_port = Some(c[2].to_string());
+
+                    host.push(PortBinding { host_ip, host_port })
+                }
+
+                pb.insert(key, Some(host));
+            }
+        }
+
+        let port_bindings = if !pb.is_empty() { Some(pb) } else { None };
+        Ok(HostConfig {
             binds: Some(binds),
             privileged: Some(arun_config.privilege()),
             devices: Some(device_mapping),
             device_cgroup_rules: Some(cgroup_rules),
+            network_mode: Some(arun_config.network().to_string()),
+            port_bindings,
             ..Default::default()
-        }
+        })
     }
 
     async fn update_state(&mut self) -> Result<(), ArunError> {
@@ -271,8 +301,8 @@ impl Runner {
             image: Some(self.config.image()),
             cmd: Some(self.config.cmd()),
             env: Some(env),
-            host_config: Some(Runner::host_config(&self.config)),
-            network_disabled: Some(self.config.network() == NetworkType::none),
+            host_config: Some(Runner::host_config(&self.config)?),
+            network_disabled: Some(self.config.network() == "none"),
             ..Default::default()
         };
 
@@ -522,7 +552,7 @@ impl Runner {
         Ok(())
     }
 
-    pub async fn attach(&self) -> Result<AttachContainerResults, ArunError> {
+    pub async fn attach(&self) -> Result<container::AttachContainerResults, ArunError> {
         let container_name = self.config.appid();
 
         let options = container::AttachContainerOptions::<String> {

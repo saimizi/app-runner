@@ -36,6 +36,7 @@ ipcon-sys = { version = "0.2.2", features = [
   "futures",
 ], optional = true }
 once_cell = "1.17.1"
+regex = "1.8.1"
 
 [features]
 default = []

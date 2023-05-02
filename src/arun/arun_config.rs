@@ -8,16 +8,8 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json,
-    std::fmt::Display,
+    std::{fmt::Display, ops::Deref},
 };
-
-#[allow(non_camel_case_types)]
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-pub enum NetworkType {
-    none,
-    host,
-    container,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum AppType {
@@ -44,13 +36,28 @@ pub struct ArunDeviceMapping {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PortBindingInfo {
+    pub port: String,
+    pub host: Vec<String>,
+}
+
+impl Deref for PortBindingInfo {
+    type Target = PortBindingInfo;
+
+    fn deref(&self) -> &Self::Target {
+        self
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ArunConfig {
     name: String,
     app_type: AppType,
     image: String,
     version: String,
     privilege: bool,
-    network: NetworkType,
+    network: String,
+    port_bindings: Option<Vec<PortBindingInfo>>,
     cmd: String,
     binds: Vec<String>,
     features: Vec<String>,
@@ -66,7 +73,8 @@ impl Default for ArunConfig {
             image: "Invalid".to_string(),
             version: "latest".to_string(),
             privilege: false,
-            network: NetworkType::none,
+            network: "none".to_string(),
+            port_bindings: None,
             cmd: "Invalid".to_string(),
             binds: Vec::new(),
             features: Vec::new(),
@@ -110,8 +118,9 @@ impl ArunConfig {
         format!("{}.{}", self.app_type, self.name)
     }
 
-    pub fn network(&self) -> NetworkType {
-        self.network
+    pub fn network(&self) -> &str {
+        jdebug!("network: {}", self.network);
+        &self.network
     }
 
     pub fn cmd(&self) -> Vec<String> {
@@ -145,6 +154,10 @@ impl ArunConfig {
 
     pub fn wayland(&self) -> bool {
         self.features.iter().any(|f| f.as_str() == "wayland")
+    }
+
+    pub fn port_bindings(&self) -> Option<&[PortBindingInfo]> {
+        self.port_bindings.as_deref()
     }
 
     pub fn monitor_interval(&self) -> u32 {

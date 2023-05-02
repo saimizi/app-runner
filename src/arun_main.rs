@@ -3,7 +3,7 @@ pub mod arun;
 #[allow(unused)]
 use {
     arun::{
-        arun_config::{AppType, ArunConfig, NetworkType},
+        arun_config::{AppType, ArunConfig},
         runner::Runner,
     },
     arunlib::arun_error::ArunError,
