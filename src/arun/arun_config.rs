@@ -152,6 +152,10 @@ impl ArunConfig {
         self.features.iter().any(|f| f.as_str() == "gui")
     }
 
+    pub fn redis_server(&self) -> bool {
+        self.features.iter().any(|f| f.as_str() == "redis-server")
+    }
+
     pub fn wayland(&self) -> bool {
         self.features.iter().any(|f| f.as_str() == "wayland")
     }

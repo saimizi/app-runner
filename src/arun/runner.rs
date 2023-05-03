@@ -7,8 +7,11 @@ use {
     arunlib::{arun_error::ArunError, utils::IntervalTimer},
     bollard::{
         container, image,
-        models::{CreateImageInfo, DeviceMapping, HostConfig, PortBinding},
-        Docker,
+        models::{
+            CreateImageInfo, DeviceMapping, EndpointIpamConfig, EndpointSettings, HostConfig, Ipam,
+            IpamConfig, PortBinding,
+        },
+        network, Docker,
     },
     error_stack::{IntoReport, Report, Result, ResultExt},
     futures::StreamExt,
@@ -21,6 +24,10 @@ use {
     std::{collections::HashMap, fmt::Display, str::FromStr},
     tokio::sync::mpsc,
 };
+
+const DEFAULT_NETWORK_SUBNET: &'static str = "192.168.10.0/24";
+const DEFAULT_NETWORK_NAME: &'static str = "virt-network0";
+const REDIS_SERVER_IP: &'static str = "192.168.10.10";
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum RunnerRequest {
@@ -86,6 +93,7 @@ pub struct Runner {
     target_state: RunnerState,
     docker: Docker,
     config: ArunConfig,
+    network_id: String,
 }
 
 impl Runner {
@@ -265,19 +273,88 @@ impl Runner {
         Ok(())
     }
 
+    // Get or create the private network.
+    pub async fn retrieve_network(docker: &mut Docker) -> Result<String, ArunError> {
+        let networks = docker
+            .list_networks::<String>(None)
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable("Failed to retrieve network list")?;
+
+        for n in networks {
+            if let Some(name) = n.name {
+                if name.as_str() == DEFAULT_NETWORK_NAME {
+                    let id =
+                        n.id.ok_or(ArunError::DockerErr)
+                            .into_report()
+                            .attach_printable(format!(
+                                "No id found for network {}",
+                                DEFAULT_NETWORK_NAME
+                            ))?;
+
+                    return Ok(id);
+                }
+            }
+        }
+
+        let ipam_config = IpamConfig {
+            subnet: Some(String::from(DEFAULT_NETWORK_SUBNET)),
+            ..Default::default()
+        };
+
+        let mut driver_options = HashMap::<&str, &str>::new();
+        driver_options.insert("com.docker.network.bridge.name", DEFAULT_NETWORK_NAME);
+
+        let options = network::CreateNetworkOptions {
+            name: DEFAULT_NETWORK_NAME,
+            check_duplicate: true,
+            driver: "bridge",
+            ipam: Ipam {
+                config: Some(vec![ipam_config]),
+                ..Default::default()
+            },
+            options: driver_options,
+            ..Default::default()
+        };
+
+        let result = docker
+            .create_network(options)
+            .await
+            .into_report()
+            .change_context(ArunError::DockerErr)
+            .attach_printable("Failed to create network")?;
+
+        if let Some(warn) = result.warning {
+            jwarn!("{}", warn);
+        }
+
+        let id = result
+            .id
+            .ok_or(ArunError::DockerErr)
+            .into_report()
+            .attach_printable("Failed to create network")?;
+
+        jinfo!("NetworkID: {}", id);
+        Ok(id)
+    }
+
     pub async fn new(json: &str, monitor_interval: Option<u32>) -> Result<Self, ArunError> {
         let arun_config = ArunConfig::parse(json, monitor_interval)?;
         jdebug!("Arun Config:\n{:?}", arun_config);
 
-        let app = Docker::connect_with_socket_defaults()
+        let mut app = Docker::connect_with_socket_defaults()
             .into_report()
             .change_context(ArunError::DockerErr)?;
+
+        let network_id = Runner::retrieve_network(&mut app).await?;
 
         let mut runner = Runner {
             config: arun_config,
             docker: app,
             state: RunnerState::NonExist,
             target_state: RunnerState::NonExist,
+            network_id,
         };
 
         runner.update_state().await?;
@@ -287,12 +364,32 @@ impl Runner {
     }
 
     pub async fn create(&mut self) -> Result<(), ArunError> {
+        let mut ip_address = None;
+
+        if self.config.redis_server() {
+            ip_address = Some(REDIS_SERVER_IP.to_string());
+        }
+
+        let endpoint_setting = EndpointSettings {
+            ipam_config: Some(EndpointIpamConfig {
+                ipv4_address: ip_address,
+                ..Default::default()
+            }),
+            network_id: Some(self.network_id.clone()),
+            ..Default::default()
+        };
+
+        let mut endpoints_config = HashMap::<String, EndpointSettings>::new();
+        endpoints_config.insert(DEFAULT_NETWORK_NAME.to_string(), endpoint_setting);
+
         let option = container::CreateContainerOptions {
             name: self.config.appid(),
             platform: None,
         };
 
         let mut env = self.config.environment();
+
+        env.push(format!("SYSTEM_REDIS_SERVER_IP={}", REDIS_SERVER_IP));
         if self.config.wayland() {
             env.push("XDG_RUNTIME_DIR=/run/user/0".to_owned());
         }
@@ -303,6 +400,7 @@ impl Runner {
             env: Some(env),
             host_config: Some(Runner::host_config(&self.config)?),
             network_disabled: Some(self.config.network() == "none"),
+            networking_config: Some(container::NetworkingConfig { endpoints_config }),
             ..Default::default()
         };
 
