@@ -1,0 +1,12 @@
+{
+  "name": "background",
+  "app_type": "Sys",
+  "image": "joukan/rpi4-appimg",
+  "version": "0.1.1",
+  "privilege": false,
+  "network": "none",
+  "cmd": "/usr/bin/background",
+  "features": [ "gui", "wayland"],
+  "binds": [],
+  "environments": []
+}

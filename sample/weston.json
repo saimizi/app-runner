@@ -1,10 +1,10 @@
 {
   "name": "weston",
   "app_type": "Sys",
-  "image": "joukan/rpi4-appimg",
-  "version": "0.1.0",
+  "image": "joukan/weston",
+  "version": "0.1.1.1",
   "privilege": true,
-  "network": "none",
+  "network": "default",
   "cmd": "/usr/bin/weston --tty=4 -Swayland-0",
   "features": [ "gui" ],
   "binds": [

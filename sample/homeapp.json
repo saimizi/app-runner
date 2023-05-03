@@ -1,0 +1,12 @@
+{
+  "name": "homeapp",
+  "app_type": "Sys",
+  "image": "joukan/rpi4-appimg",
+  "version": "0.1.1",
+  "privilege": false,
+  "network": "none",
+  "cmd": "/usr/bin/homeapp --platform wayland --mode 1920x1080",
+  "features": [ "gui", "wayland"],
+  "binds": [],
+  "environments": []
+}
